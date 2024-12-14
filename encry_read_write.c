@@ -34,50 +34,256 @@
  * 
  * @return How many bytes have been read/written.
  *****************************************************************************/
-/*
-RC4初始化函数
-*/
-void rc4_init(unsigned char* s, unsigned char* key, unsigned long Len_k)
-{
-	int i = 0, j = 0;
-	char k[256] = { 0 };
-	unsigned char tmp = 0;
-	for (i = 0; i < 256; i++) {
-		s[i] = i;
-		k[i] = key[i % Len_k];
-	}
-	for (i = 0; i < 256; i++) {
-		j = (j + s[i] + k[i]) % 256;
-		tmp = s[i];
-		s[i] = s[j];
-		s[j] = tmp;
-	}
+//Aes algorithom
+
+// RotWord
+static inline void RotWord(unsigned char *word) {
+    unsigned char temp = word[0];
+    word[0] = word[1];
+    word[1] = word[2];
+    word[2] = word[3];
+    word[3] = temp;
 }
 
-/*
-RC4加解密函数
-unsigned char* Data     加解密的数据
-unsigned long Len_D     加解密数据的长度
-unsigned char* key      密钥
-unsigned long Len_k     密钥长度
-*/
-void rc4_crypt(unsigned char* Data, unsigned long Len_D, unsigned char* key, unsigned long Len_k) //加解密
-{
-	unsigned char s[256];
-	rc4_init(s, key, Len_k);
-	int i = 0, j = 0, t = 0;
-	unsigned long k = 0;
-	unsigned char tmp;
-	for (k = 0; k < Len_D; k++) {
-		i = (i + 1) % 256;
-		j = (j + s[i]) % 256;
-		tmp = s[i];
-		s[i] = s[j];
-		s[j] = tmp;
-		t = (s[i] + s[j]) % 256;
-		Data[k] = Data[k] ^ s[t];
-	}
+// SubWord
+static inline void SubWord(unsigned char *word, int n) {
+    for (int i = 0; i < n; i++)
+        word[i] = S[word[i]];
 }
+
+
+int aes_make_enc_subkeys(const unsigned char key[16], unsigned char subKeys[11][16])
+{
+    if (key == 0 || subKeys == 0) {
+        return 1;
+    }
+    int i = 0;
+    unsigned char temp[4];
+    
+    memcpy(subKeys[0], key, 16);
+   
+    for (i = 1; i <= 10; i++) {
+        memcpy(temp, &subKeys[i - 1][12], 4);  
+        RotWord(temp);  
+        // SubWord(temp,4);  
+        for (int i = 0; i < 4; i++)
+            temp[i] = S[temp[i]];
+        
+        for (int j = 0; j < 4; j++)
+            subKeys[i][j] = subKeys[i - 1][j] ^ temp[j];
+        
+        subKeys[i][0] ^= rcon[i]; 
+        
+        for (int j = 4; j < 16; j += 4) {
+            for (int k = 0; k < 4; k++) {
+                subKeys[i][j + k] = subKeys[i - 1][j + k] ^ subKeys[i][j + k - 4];
+            }
+        }
+    }
+    return 0;
+}
+
+
+static inline void ShiftRows(unsigned char *m)
+{
+    int i;
+    unsigned char m_e[16]; 
+    memcpy(m_e,m,16);
+	for (i=0;i<16;i++)
+		m[i]=m_e[e[i]-1];
+}
+
+unsigned char mul(unsigned char a, unsigned char b) {
+    unsigned char p = 0;
+    unsigned char high_bit_mask = 0x80;
+    unsigned char high_bit = 0;
+    unsigned char modulo = 0x1B; /* x^8 + x^4 + x^3 + x + 1 */
+
+    for (int i = 0; i < 8; i++) {
+        if (b & 1)
+            p ^= a;
+        
+        high_bit = a & high_bit_mask;
+        a <<= 1;
+        if (high_bit)
+            a ^= modulo;
+        
+        b >>= 1;
+    }
+
+    return p;
+}
+
+
+char mul_2_table[16];
+void init_mul_2_table(unsigned char *state) {
+    for(int i = 0; i < 16; i++)
+        mul_2_table[i] = mul(0x02, state[i]);
+}
+
+char mul_3_table[16];
+void init_mul_3_table(unsigned char *state) {
+    for(int i = 0; i < 16; i++)
+        mul_3_table[i] = mul(0x03, state[i]);
+}
+
+void MixColumns(unsigned char *state) {
+    unsigned char tmp[16];
+    init_mul_2_table(state);
+    init_mul_3_table(state);
+
+    tmp[0]=(unsigned char)(mul_2_table[0] ^  mul_3_table[1] ^ state[2] ^ state[3]);
+    tmp[1]=(unsigned char)(state[0] ^ mul_2_table[1] ^  mul_3_table[2] ^ state[3]);
+    tmp[2]=(unsigned char)(state[0] ^ state[1] ^ mul_2_table[2] ^  mul_3_table[3]);
+    tmp[3]=(unsigned char)( mul_3_table[0] ^ state[1] ^ state[2] ^ mul_2_table[3]);
+    tmp[4]=(unsigned char)(mul_2_table[4] ^  mul_3_table[5] ^ state[6] ^ state[7]);
+    tmp[5]=(unsigned char)(state[4] ^ mul_2_table[5] ^  mul_3_table[6] ^ state[7]);
+    tmp[6]=(unsigned char)(state[4] ^ state[5] ^ mul_2_table[6] ^  mul_3_table[7]);
+    tmp[7]=(unsigned char)( mul_3_table[4] ^ state[5] ^ state[6] ^ mul_2_table[7]);
+    tmp[8]=(unsigned char)(mul_2_table[8] ^  mul_3_table[9] ^ state[10] ^ state[11]);
+    tmp[9]=(unsigned char)(state[8] ^ mul_2_table[9] ^  mul_3_table[10] ^ state[11]);
+    tmp[10]=(unsigned char)(state[8] ^ state[9] ^ mul_2_table[10] ^  mul_3_table[11]);
+    tmp[11]=(unsigned char)( mul_3_table[8] ^ state[9] ^ state[10] ^ mul_2_table[11]);
+    tmp[12]=(unsigned char)(mul_2_table[12] ^  mul_3_table[13] ^ state[14] ^ state[15]);
+    tmp[13]=(unsigned char)(state[12] ^ mul_2_table[13] ^  mul_3_table[14] ^ state[15]);
+    tmp[14]=(unsigned char)(state[12] ^ state[13] ^mul_2_table[14] ^  mul_3_table[15]);
+    tmp[15]=(unsigned char)( mul_3_table[12] ^ state[13] ^ state[14] ^ mul_2_table[15]);
+    memcpy(state, tmp, 16);
+}
+
+
+void aes_encrypt_block(const unsigned char *input, unsigned char subKeys[11][16], unsigned char *output)
+{
+    unsigned char AddRoundkey[16];
+    //
+    for(int i=0;i<16;i++)
+        AddRoundkey[i]=subKeys[0][i]^input[i];
+    
+    //9 rounds
+    for(int i=0;i<9;i++)
+    {
+        SubWord(AddRoundkey,16);//字节代换
+        ShiftRows(AddRoundkey);//行移位
+        MixColumns(AddRoundkey);//列混合
+
+        for(int h=0;h<16;h++)
+            AddRoundkey[h]=subKeys[i+1][h]^AddRoundkey[h];
+    }
+    //1 final rounds
+    SubWord(AddRoundkey,16);//字节代换
+    ShiftRows(AddRoundkey);//行移位
+    for(int h=0;h<16;h++)
+        output[h]=subKeys[10][h]^AddRoundkey[h];
+}
+
+char mul_e_table[16];
+void init_mul_e_table(unsigned char *state) {
+    for(int i = 0; i < 16; i++)
+        mul_e_table[i] = mul(0x0e, state[i]);
+}
+
+char mul_b_table[16];
+void init_mul_b_table(unsigned char *state) {
+    for(int i = 0; i < 16; i++)
+        mul_b_table[i] = mul(0x0b, state[i]);
+}
+
+char mul_d_table[16];
+void init_mul_d_table(unsigned char *state) {
+    for(int i = 0; i < 16; i++)
+        mul_d_table[i] = mul(0x0d, state[i]);
+}
+
+char mul_9_table[16];
+void init_mul_9_table(unsigned char *state) {
+    for(int i = 0; i < 16; i++)
+        mul_9_table[i] = mul(0x09, state[i]);
+}
+
+void InvMixColumns(unsigned char *state) {
+    unsigned char tmp[16];
+    init_mul_e_table(state);
+    init_mul_b_table(state);
+    init_mul_d_table(state);
+    init_mul_9_table(state);
+
+    tmp[0] = (unsigned char) (mul_e_table[0] ^ mul_b_table[1] ^  mul_d_table[2] ^ mul_9_table[3]);
+    tmp[1] = (unsigned char) (mul_9_table[0] ^ mul_e_table[1] ^ mul_b_table[2] ^ mul_d_table[3]);
+    tmp[2] = (unsigned char) (mul_d_table[0] ^ mul_9_table[1] ^ mul_e_table[2] ^ mul_b_table[3]);
+    tmp[3] = (unsigned char) (mul_b_table[0] ^ mul_d_table[1] ^ mul_9_table[2] ^ mul_e_table[3]);
+    tmp[4] = (unsigned char) (mul_e_table[4] ^ mul_b_table[5] ^ mul_d_table[6] ^ mul_9_table[7]);
+    tmp[5] = (unsigned char) (mul_9_table[4] ^ mul_e_table[5] ^ mul_b_table[6] ^ mul_d_table[7]);
+    tmp[6] = (unsigned char) (mul_d_table[4] ^ mul_9_table[5] ^ mul_e_table[6] ^ mul_b_table[7]);
+    tmp[7] = (unsigned char) (mul_b_table[4] ^ mul_d_table[5] ^ mul_9_table[6] ^ mul_e_table[7]);
+    tmp[8] = (unsigned char) (mul_e_table[8] ^ mul_b_table[9] ^ mul_d_table[10] ^ mul_9_table[11]);
+    tmp[9] = (unsigned char) (mul_9_table[8] ^ mul_e_table[9] ^ mul_b_table[10] ^ mul_d_table[11]);
+    tmp[10] = (unsigned char) (mul_d_table[8] ^ mul_9_table[9] ^ mul_e_table[10] ^ mul_b_table[11]);
+    tmp[11] = (unsigned char) (mul_b_table[8] ^ mul_d_table[9] ^ mul_9_table[10] ^ mul_e_table[11]);
+    tmp[12] = (unsigned char) (mul_e_table[12] ^ mul_b_table[13] ^ mul_d_table[14] ^ mul_9_table[15]);
+    tmp[13] = (unsigned char) (mul_9_table[12] ^ mul_e_table[13] ^mul_b_table[14] ^ mul_d_table[15]);
+    tmp[14] = (unsigned char) (mul_d_table[12] ^ mul_9_table[13] ^ mul_e_table[14] ^ mul_b_table[15]);
+    tmp[15] = (unsigned char) (mul_b_table[12] ^ mul_d_table[13] ^ mul_9_table[14] ^ mul_e_table[15]);
+    
+    memcpy(state, tmp, 16);
+}
+
+int aes_make_dec_subkeys(const unsigned char key[16], unsigned char subKeys[11][16])
+{
+    if (aes_make_enc_subkeys(key, subKeys) != 0)
+        return 1;
+    
+    for (int round = 1; round < 10; round++)
+        InvMixColumns(subKeys[round]);
+    
+    return 0;
+}
+
+// 逆字节代换函数
+static inline void InvSubWord(unsigned char *word, int n) {
+    for (int i = 0; i < n; i++)
+        word[i] = inv_S[word[i]];
+    
+}
+
+// 逆行移位函数
+static inline void InvShiftRows(unsigned char *m)
+{
+    int i;
+    unsigned char m_e[16]; 
+    memcpy(m_e,m,16);
+	for (i=0;i<16;i++)
+		m[i]=m_e[inv_e[i]-1];
+	
+}
+
+void aes_decrypt_block(const unsigned char *input, unsigned char subKeys[11][16], unsigned char *output)
+{
+    unsigned char state[16];
+    int i;
+    // 初始轮密钥加
+    for (i = 0; i < 16; i++)
+        state[i] = input[i] ^ subKeys[10][i];
+    
+    // 执行9轮的解密操作
+    for (i = 9; i > 0; i--) {
+        InvSubWord(state, 16);  // 逆字节代换
+        InvShiftRows(state);  // 逆行移位
+        InvMixColumns(state);  // 逆列混合
+        for (int j = 0; j < 16; j++)
+            state[j] ^= subKeys[i][j];  // 轮密钥加    
+    }
+
+    // 最后一轮解密操作（没有列混合）
+    InvSubWord(state, 16);  // 逆字节代换
+    InvShiftRows(state);  // 逆行移位
+    for (int j = 0; j < 16; j++)
+        output[j] = subKeys[0][j]^state[j];  // 轮密钥加
+}
+
+
+
+
+
 
 PUBLIC int encry_do_rdwt()
 {
